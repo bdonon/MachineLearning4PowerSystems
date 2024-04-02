@@ -70,3 +70,22 @@ class BasePolicy(ABC):
                 os.mkdir(normalizer_dir)
             normalizer.save(normalize_path)
         return normalizer
+
+    def _build_normalizer_no_env(self, backend, data_dir, observation_structure, env_name, normalizer_args=None):
+        normalizer_dir = os.path.join(data_dir, env_name)
+        normalize_path = os.path.join(normalizer_dir, 'normalizer.pkl')
+        if os.path.exists(normalize_path):
+            return H2MGNormalizer(filename=normalize_path)
+        if normalizer_args is None:
+            normalizer = H2MGNormalizer(
+                backend=backend, structure=observation_structure, data_dir=data_dir)
+        else:
+            normalizer = H2MGNormalizer(
+                backend=backend, structure=observation_structure, data_dir=data_dir,
+                **normalizer_args)
+
+        if not os.path.exists(normalize_path):
+            if not os.path.exists(normalizer_dir):
+                os.mkdir(normalizer_dir)
+            normalizer.save(normalize_path)
+        return normalizer

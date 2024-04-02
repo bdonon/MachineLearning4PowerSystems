@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 from typing import Dict, Any
 
-from ml4ps.h2mg.hyper_edges import HyperEdges, collate_hyper_edges, separate_hyper_edges
+from ml4ps.h2mg.hyper_edges import HyperEdges, collate_hyper_edges, separate_hyper_edges, stack_hyper_edges
 from typing import Callable
 
 
@@ -24,8 +24,8 @@ class H2MG(dict):
     allows to convert addresses into integers.
     """
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *args, **kwargs):
+        super().__init__( *args, **kwargs)
 
     def __str__(self):
         def build_str(h2mg):
@@ -149,6 +149,13 @@ class H2MG(dict):
         for hyper_edges in self.values():
             hyper_edges.apply(fn)
         return self
+    
+    def as_numpy(self):
+        data = dict()
+        for k, hyper_edges in self.items():
+            data[k] = hyper_edges.as_numpy()
+        return H2MG(data)
+
 
     def combine(self, other: 'H2MG') -> 'H2MG':
         """Returns an H2MG that is the combination of `self` and `other`.
@@ -159,7 +166,7 @@ class H2MG(dict):
         for k in (self | other):
             if (k in self) and (k in other):
                 h2mg._add_hyper_edges(k, self[k].combine(other[k]))
-            elif k in self: # TODO: was k in self.spaces but error ''H2MG' object has no attribute 'spaces''
+            elif k in self:
                 h2mg._add_hyper_edges(k, self[k])
             else:
                 h2mg._add_hyper_edges(k, other[k])
@@ -208,6 +215,9 @@ class H2MGStructure(dict):
 
     def __init__(self):
         super().__init__({})
+    
+    def __hash__(self):
+        return hash(tuple(sorted(self.items())))
 
     def tree_flatten(self):
         """Flattens a PyTree, required for JAX compatibility."""
@@ -281,7 +291,7 @@ class H2MGStructure(dict):
         for k in (self | other):
             if (k in self) and (k in other):
                 h2mg_structure._add_hyper_edges_structure(k, self[k].combine(other[k]))
-            elif k in self: # TODO: before was k in self.spaces: but error ''H2MGStructure' object has no attribute 'spaces''
+            elif k in self:
                 h2mg_structure._add_hyper_edges_structure(k, self[k])
             else:
                 h2mg_structure._add_hyper_edges_structure(k, other[k])
@@ -293,6 +303,13 @@ def collate_h2mgs(h2mgs_list):
     r = H2MG()
     for k, hyper_edges in h2mgs_list[0].items():
         r[k] = collate_hyper_edges([h2mg[k] for h2mg in h2mgs_list])
+    return r
+
+def stack_h2mgs(h2mgs_list):
+    """Collates together a list of H2MGs by collating Hyper-Edges together."""
+    r = H2MG()
+    for k, hyper_edges in h2mgs_list[0].items():
+        r[k] = stack_hyper_edges([h2mg[k] for h2mg in h2mgs_list])
     return r
 
 

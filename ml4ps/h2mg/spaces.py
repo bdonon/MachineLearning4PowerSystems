@@ -14,6 +14,9 @@ FEATURES = "features"
 class H2MGSpace(spaces.Dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+    
+    def __hash__(self):
+        return hash(tuple(sorted(self.items())))
 
     @classmethod
     def from_structure(cls, structure: H2MGStructure) -> 'H2MGSpace':
@@ -157,6 +160,9 @@ class HyperEdgesSpace(spaces.Dict):
         if (addresses is not None) and addresses:
             data[ADDRESSES] = addresses
         super().__init__(spaces.Dict(data), *args, **kwargs)
+    
+    def __hash__(self):
+        return hash(tuple(sorted(list(self.keys()))+[hash(self.structure)])) # TODO
 
     @classmethod
     def from_structure(cls, structure: HyperEdgesStructure) -> 'HyperEdgesSpace':
@@ -370,3 +376,25 @@ def _my_write(space: HyperEdgesSpace, index: int, values: HyperEdges, shared_mem
         gym.vector.utils.shared_memory.write_to_shared_memory(space.addresses, index, values.addresses, shared_memory.addresses)
     if values.features is not None:
         gym.vector.utils.shared_memory.write_to_shared_memory(space.features, index, values.features, shared_memory.features)
+
+
+# TODO
+@gym.vector.utils.concatenate.register(H2MGSpace)
+def _concatenate_dict(space, items, out):
+    return H2MG(
+        [
+            (key, gym.vector.utils.concatenate(subspace, [item[key] for item in items], out[key]))
+            for (key, subspace) in space.spaces.items()
+        ]
+    )
+
+# TODO
+@gym.vector.utils.concatenate.register(HyperEdgesSpace)
+def _concatenate_dict(space, items, out):
+    _d= OrderedDict(
+        [
+            (key, gym.vector.utils.concatenate(subspace, [item[key] for item in items], out[key]))
+            for (key, subspace) in space.spaces.items()
+        ]
+    )
+    return HyperEdges(features=_d.get(FEATURES, None), addresses=_d.get(ADDRESSES, None))

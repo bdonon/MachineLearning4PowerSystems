@@ -45,6 +45,15 @@ class HyperEdges(dict):
     
     def apply(self, fn: Callable):
         self.features = {k: fn(v) for k, v in self.features.items()}
+    
+    def as_numpy(self):
+        features = self.features
+        if features is not None:
+            features = {k: np.asarray(v) for k,v in features.items()}
+        addresses = self.addresses
+        if addresses is not None:
+            addresses = {k: np.asarray(v) for k,v in addresses.items()}
+        return HyperEdges(features=features, addresses=addresses)
 
     @classmethod
     def from_structure(cls, structure: 'HyperEdgesStructure', value: float = 0.) -> 'HyperEdges':
@@ -101,17 +110,20 @@ class HyperEdges(dict):
     def array(self) -> np.array:
         """Returns an array by stacking features together along the last dimension."""
         if self.features:
-            return jnp.stack(list(self.features.values()), axis=-1)
+            return jnp.stack([self.features[k] for k in sorted(self.features)], axis=-1)
         else:
             return None
 
     @array.setter
     def array(self, value: np.array):
         if self.features:
-            new_values = jnp.split(value, value.shape[-1], axis=-1)
-            self.features = {k: jnp.squeeze(v, axis=-1) for k, v in zip(self.features, new_values)}
+            i = 0
+            for key in sorted(self.features.keys()):
+                self.features[key] = value[..., i]  # Slice over last axis
+                i += 1
         else:
             pass
+        
 
     @property
     def flat_array(self) -> np.array:
@@ -271,6 +283,11 @@ class HyperEdgesStructure(dict):
             data[FEATURES] = features
 
         super().__init__(data)
+    
+    def __hash__(self):
+        addresses = self.addresses or {}
+        features = self.features or {}
+        return hash(tuple(sorted(list(addresses.items())+list(features.items()))))
 
     def tree_flatten(self):
         """Flattens a PyTree, required for JAX compatibility."""
@@ -367,14 +384,32 @@ def collate_hyper_edges(hyper_edges_list: list) -> HyperEdges:
     features_dict = None
     if hyper_edges_list[0].features is not None:
         features_dict = {}
-        for k in hyper_edges_list[0].features:
+        for k in sorted(hyper_edges_list[0].features):
             features_dict[k] = np.stack([he.features[k] for he in hyper_edges_list], axis=0)
 
     addresses_dict = None
     if hyper_edges_list[0].addresses is not None:
         addresses_dict = {}
-        for k in hyper_edges_list[0].addresses:
+        for k in sorted(hyper_edges_list[0].addresses):
             addresses_dict[k] = np.stack([he.addresses[k] for he in hyper_edges_list], axis=0)
+
+    return HyperEdges(features=features_dict, addresses=addresses_dict)
+
+
+
+def stack_hyper_edges(hyper_edges_list: list) -> HyperEdges:
+    """Stack together a list of Hyper Edges by batching addresses and features along the last axis."""
+    features_dict = None
+    if hyper_edges_list[0].features is not None:
+        features_dict = {}
+        for k in sorted(hyper_edges_list[0].features):
+            features_dict[k] = np.stack([he.features[k] for he in hyper_edges_list], axis=1)
+
+    addresses_dict = None
+    if hyper_edges_list[0].addresses is not None:
+        addresses_dict = {}
+        for k in sorted(hyper_edges_list[0].addresses):
+            addresses_dict[k] = np.stack([he.addresses[k] for he in hyper_edges_list], axis=1)
 
     return HyperEdges(features=features_dict, addresses=addresses_dict)
 
@@ -388,11 +423,11 @@ def separate_hyper_edges(hyper_edges_batch: HyperEdges) -> list:
         try:
             features_dict = None
             if hyper_edges_batch.features is not None:
-                features_dict = {k: hyper_edges_batch.features[k][i] for k in hyper_edges_batch.features}
+                features_dict = {k: hyper_edges_batch.features[k][i] for k in sorted(hyper_edges_batch.features)}
 
             addresses_dict = None
             if hyper_edges_batch.addresses is not None:
-                addresses_dict = {k: hyper_edges_batch.addresses[k][i] for k in hyper_edges_batch.addresses}
+                addresses_dict = {k: hyper_edges_batch.addresses[k][i] for k in sorted(hyper_edges_batch.addresses)}
 
             r.append(HyperEdges(addresses=addresses_dict, features=features_dict))
 

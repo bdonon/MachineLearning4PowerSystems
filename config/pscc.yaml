@@ -1,0 +1,59 @@
+latent_dim: 64
+enc_dec_hsize: [128,64]
+dyn_hsize: [128]
+n_iter: 200000
+data_dir: ../data/case60nordic/vanilla_no_filter/train
+eval_data_dir: ../data/case60nordic/vanilla_no_filter/val_2000
+exp_name: pscc_2024
+run_name: null
+res_dir: ${exp_name}
+hparams: null
+eval_every_n_iter: 1000
+train_log_every_n_iter: 1000
+clip_norm: 100
+cst_lr: 3e-4
+cst_sigma: 0.005
+batch_size: 32
+eval_batch_size: 8
+eval_size: 2000
+method: reinforce_estimate
+env_name: VoltageManagementPandapowerV1
+n_action: 16
+cost_args:
+    eps_v: 0.05
+    eps_i: 0.05
+    eps_q: 0.5
+    lmb_v: 200
+    lmb_i: 200
+    lmb_l: 1
+    lmb_q: 0
+    c_div: 1
+nn_args:
+    local_encoder_hidden_size: ${enc_dec_hsize}
+    global_encoder_hidden_size: ${enc_dec_hsize}
+    local_dynamics_hidden_size: ${dyn_hsize}
+    global_dynamics_hidden_size: ${dyn_hsize}
+    local_decoder_hidden_size: ${enc_dec_hsize}
+    global_decoder_hidden_size: ${enc_dec_hsize}
+    local_encoder_output: ${latent_dim}
+    global_encoder_output: ${latent_dim}
+    local_latent_dimension: ${latent_dim}
+    global_latent_dimension: ${latent_dim}
+    enc_dec_activation: "tanh"
+    dyn_activation: "tanh"
+    solver_name: Euler
+    stepsize_controller_name: ConstantStepSize
+    dt0: 0.05
+    global_msg: false
+normalize_signal: true
+clear_cache: false
+clip_dc_dy_by_value: null
+clip_dc_dy_by_norm: null
+sim_args:
+  enforce_q_lims: true
+  delta_q: 0.
+  recycle:
+    bus_pq: false
+    gen: true
+    trafo: false
+    init: results

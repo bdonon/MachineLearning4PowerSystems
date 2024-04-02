@@ -20,7 +20,7 @@ GLOBAL_DECODER_KEY = "global_decoder"
 
 MAX_INTEGER = 2147483647
 
-def smooth_activation(x, alpha=0.1): # changed from 0.01
+def smooth_activation(x, alpha=0.1):
     return alpha * x + (1-alpha) * (jnp.log(1+jnp.exp(x)) - jnp.log(2))
 
 def identity_fn(x):
@@ -131,6 +131,8 @@ class LocalDynamics(nn.Module):
     out_size: int
     activation: str
     final_activation: str
+    global_msg: bool
+
 
     @nn.compact
     def __call__(self, h2mg_in: H2MG, h2mg_encoded: dict, h: dict, t: float):
@@ -138,18 +140,28 @@ class LocalDynamics(nn.Module):
         count = 0
         for hyper_edge_name, hyper_edges in h2mg_in.local_hyper_edges.items():
             if hyper_edges.addresses is not None:
+
+                ones = jnp.ones_like(h2mg_encoded[LOCAL_KEY][hyper_edge_name])[:, :1]
+                if self.global_msg:
+                    global_mask = jnp.ones_like(h2mg_encoded[LOCAL_KEY][hyper_edge_name])[:, :1]
+                else:
+                    global_mask = jnp.zeros_like(h2mg_encoded[LOCAL_KEY][hyper_edge_name])[:, :1]
+                
+                nn_input_list = [
+                    h[GLOBAL_KEY] * global_mask, # GLOBAL_MSG
+                    h2mg_encoded[LOCAL_KEY][hyper_edge_name],
+                    h2mg_encoded[GLOBAL_KEY] * global_mask, # GLOBAL_MSG
+                    t * ones
+                ]
                 for address_name, address_values in hyper_edges.addresses.items():
-                    mlp = MLP(self.hidden_size, self.out_size, get_activation(self.activation), name="{}-{}".format(hyper_edge_name, address_name)) # leaky or tanh
-                    ones = jnp.ones_like(h2mg_encoded[LOCAL_KEY][hyper_edge_name])[:, :1]
                     clean_address_values = jnp.nan_to_num(address_values, nan=MAX_INTEGER).astype(int)
-                    nn_input = jnp.concatenate([
-                        h[LOCAL_KEY].at[clean_address_values].get(mode='drop', fill_value=0.),
-                        h[GLOBAL_KEY] * ones,
-                        h2mg_encoded[LOCAL_KEY][hyper_edge_name],
-                        h2mg_encoded[GLOBAL_KEY] * ones,
-                        t * ones
-                    ], axis=1)
-                    # nn_input = nn.LayerNorm()(nn_input)
+                    nn_input_list.append(h[LOCAL_KEY].at[clean_address_values].get(mode='drop', fill_value=0.))
+
+                nn_input = jnp.concatenate(nn_input_list, axis=1)
+
+                for address_name, address_values in hyper_edges.addresses.items():
+                    clean_address_values = jnp.nan_to_num(address_values, nan=MAX_INTEGER).astype(int)
+                    mlp = MLP(self.hidden_size, self.out_size, get_activation(self.activation), name="{}-{}".format(hyper_edge_name, address_name)) # leaky or tanh
                     r = get_activation(self.activation)(mlp(nn_input)) # leaky_relu or tanh
                     r = jnp.where(jnp.isnan(r), jnp.nan, jnp.nan_to_num(r, nan=0.))
                     delta_sum = delta_sum.at[clean_address_values].add(r, mode='drop')
@@ -175,6 +187,7 @@ class LocalDecoder(nn.Module):
     hidden_size: Sequence[int]
     local_output_features_dict: dict
     activation: str
+    global_msg: bool
 
     @nn.compact
     def __call__(self, h2mg_in: H2MG, h2mg_encoded: dict, h: dict):
@@ -187,12 +200,15 @@ class LocalDecoder(nn.Module):
                 clean_address_values = jnp.nan_to_num(address_values, nan=MAX_INTEGER).astype(int)
                 latent_variable_input_list.append(h[LOCAL_KEY].at[clean_address_values].get(mode='drop', fill_value=0.))
             ones = jnp.ones_like(h2mg_encoded[LOCAL_KEY][hyper_edges_name])[:, :1]
+            if self.global_msg:
+                global_mask = jnp.ones_like(h2mg_encoded[LOCAL_KEY][hyper_edges_name])[:, :1]
+            else:
+                global_mask = jnp.zeros_like(h2mg_encoded[LOCAL_KEY][hyper_edges_name])[:, :1]
             nn_input = jnp.concatenate([
                 *latent_variable_input_list,
-                h[GLOBAL_KEY] * ones,
+                h[GLOBAL_KEY] * global_mask, # GLOBAL_MSG
                 h2mg_encoded[LOCAL_KEY][hyper_edges_name],
-                h2mg_encoded[GLOBAL_KEY] * ones], axis=1)
-            # nn_input == nn.LayerNorm()(nn_input)
+                h2mg_encoded[GLOBAL_KEY] * global_mask], axis=1) # GLOBAL_MSG
             features_dict = {}
             for feature_name in feature_list:
                 mlp = MLP(self.hidden_size, 1, get_activation(self.activation), name="{}-{}".format(hyper_edges_name, feature_name))
@@ -224,7 +240,6 @@ class GlobalDynamics(nn.Module):
             h2mg_encoded[GLOBAL_KEY],
             t * jnp.ones([1, 1])
         ], axis=1)
-        # nn_input = nn.LayerNorm()(nn_input)
         r = MLP(self.hidden_size, self.out_size, get_activation(self.activation))(nn_input) # leaky_relu or tanh
         r = jnp.where(jnp.isnan(r), jnp.nan, jnp.nan_to_num(r, nan=0.))
         return r
@@ -242,22 +257,13 @@ class GlobalDecoder(nn.Module):
 
     @nn.compact
     def __call__(self, h2mg_in, h2mg_encoded, h):
-        isnan_mask = jnp.isnan(h2mg_in.global_hyper_edges.array[:,0])
         features_dict = {}
         nn_input = jnp.concatenate(
             [nan_mean_at(h[LOCAL_KEY], h2mg_in.all_addresses_array), h[GLOBAL_KEY], h2mg_encoded[GLOBAL_KEY]], axis=1)
-        # nn_input = jnp.concatenate(
-        #     [h[GLOBAL_KEY], h2mg_encoded[GLOBAL_KEY]], axis=1)
-        # nn_input == nn.LayerNorm()(nn_input)
+
         for k in self.global_output_features_list:
             mlp = MLP(self.hidden_size, 1, get_activation(self.activation), name="{}".format(k), use_bias=True)
             features_dict[k] = mlp(nn_input)[:, 0]
-
-            # features_dict[k] = jnp.mean(nn_input, axis=0, keepdims=True)[:, 0]
-
-            # features_dict[k] = h[GLOBAL_KEY][:, 0]
-
-            features_dict[k] = jnp.where(isnan_mask, jnp.nan, mlp(nn_input)[:, 0])
         return HyperEdges(features=features_dict)
 
 
@@ -323,7 +329,8 @@ class H2MGNODE(flax.struct.PyTreeNode):
              max_steps: int = 4096,
              enc_dec_activation: str = "tanh",
              dyn_activation: str = "tanh",
-             dyn_final_activation: str = "tanh"):
+             dyn_final_activation: str = "tanh",
+             global_msg: bool = True):
 
         if local_encoder_hidden_size is None:
             local_encoder_hidden_size = [32, 32]
@@ -348,13 +355,13 @@ class H2MGNODE(flax.struct.PyTreeNode):
 
         local_encoder = LocalEncoder(local_encoder_hidden_size, local_encoder_output, activation=enc_dec_activation)
         global_encoder = GlobalEncoder(global_encoder_hidden_size, global_encoder_output, activation=enc_dec_activation)
-        local_dynamics = LocalDynamics(local_dynamics_hidden_size, local_latent_dimension, activation=dyn_activation, final_activation=dyn_final_activation)
+        local_dynamics = LocalDynamics(local_dynamics_hidden_size, local_latent_dimension, activation=dyn_activation, final_activation=dyn_final_activation, global_msg=global_msg)
         global_dynamics = GlobalDynamics(global_dynamics_hidden_size, global_latent_dimension, activation=dyn_activation)
         if any([(he_struct.features is not None) for he_struct in output_structure.local_hyper_edges_structure.values()]):
             local_output_features_dict = {k: list(he_struct.features.keys())
                 for k, he_struct in output_structure.local_hyper_edges_structure.items()
                 if he_struct.features is not None}
-            local_decoder = LocalDecoder(local_decoder_hidden_size, local_output_features_dict, activation=enc_dec_activation)
+            local_decoder = LocalDecoder(local_decoder_hidden_size, local_output_features_dict, activation=enc_dec_activation, global_msg=global_msg)
 
         else:
             local_decoder = None
@@ -391,6 +398,18 @@ class H2MGNODE(flax.struct.PyTreeNode):
 
         return params
 
+    def vmap_apply(self, params, h2mg_in, **kwargs):
+        return jax.vmap(self.apply, in_axes=(None, 0))(params, h2mg_in, **kwargs)
+    
+    def encode(self, params, h2mg_in, **kwargs):
+        h2mg_local_encoded = self.local_encoder.apply(params[LOCAL_ENCODER_KEY], h2mg_in)
+        h2mg_global_encoded = self.global_encoder.apply(params[GLOBAL_ENCODER_KEY], h2mg_in)
+        h2mg_encoded = {LOCAL_KEY: h2mg_local_encoded, GLOBAL_KEY: h2mg_global_encoded}
+        return h2mg_encoded
+    
+    def vmap_encode(self, params, h2mg_in, **kwargs):
+        return jax.vmap(self.encode, in_axes=(None, 0))(params, h2mg_in, **kwargs)
+
     def apply(self, params, h2mg_in, **kwargs):
 
         h2mg_local_encoded = self.local_encoder.apply(params[LOCAL_ENCODER_KEY], h2mg_in)
@@ -421,7 +440,6 @@ class H2MGNODE(flax.struct.PyTreeNode):
         if self.global_decoder is not None:
             global_hyper_edges = self.global_decoder.apply(params[GLOBAL_DECODER_KEY], h2mg_in, h2mg_encoded, h1)
             h2mg_out.add_global_hyper_edges(global_hyper_edges)
-            # h2mg_out.add_global_hyper_edges(HyperEdges(features=h1[GLOBAL_KEY])) # TODO REMOVE
         if self.local_decoder is not None:
             local_hyper_edges = self.local_decoder.apply(params[LOCAL_DECODER_KEY], h2mg_in, h2mg_encoded, h1)
             for k, hyper_edges in local_hyper_edges.items():
