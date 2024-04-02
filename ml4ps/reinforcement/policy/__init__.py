@@ -4,6 +4,7 @@ from ml4ps.reinforcement.policy.factorized_delta_discrete import FactorizedDelta
 from ml4ps.reinforcement.policy.continous_and_discrete import ContinuousAndDiscrete
 from ml4ps.reinforcement.policy.base import BasePolicy
 
+
 def get_policy(policy_type, env, **policy_kwargs) -> BasePolicy:
     if policy_type == 'continuous':
         return ContinuousPolicy(env, **policy_kwargs)
