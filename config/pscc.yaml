@@ -4,6 +4,7 @@ dyn_hsize: [128]
 n_iter: 200000
 data_dir: ../data/case60nordic/vanilla_no_filter/train
 eval_data_dir: ../data/case60nordic/vanilla_no_filter/val_2000
+test_data_dir: ../data/case60nordic/vanilla_no_filter/test
 exp_name: pscc_2024
 run_name: null
 res_dir: ${exp_name}
@@ -16,6 +17,7 @@ cst_sigma: 0.005
 batch_size: 32
 eval_batch_size: 8
 eval_size: 2000
+test_size: 10000
 method: reinforce_estimate
 env_name: VoltageManagementPandapowerV1
 n_action: 16
